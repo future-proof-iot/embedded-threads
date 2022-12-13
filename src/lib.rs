@@ -1,6 +1,10 @@
+#![no_std]
+#![feature(inline_const)]
+#![feature(naked_functions)]
+
+use core::arch::asm;
 use core::cell::UnsafeCell;
 use core::ptr::write_volatile;
-use core::{arch::asm, borrow::BorrowMut};
 
 use riot_rs_runqueue::{RunQueue, RunqueueId, ThreadId};
 
@@ -57,7 +61,7 @@ impl Threads {
         cortex_m::asm::isb();
     }
 
-    fn get_unused<'cs>(&'cs mut self) -> Option<(&'cs mut Thread, ThreadId)> {
+    fn get_unused(&mut self) -> Option<(&mut Thread, ThreadId)> {
         for i in 0..THREADS_NUMOF {
             if self.threads[i].state == ThreadState::Invalid {
                 return Some((&mut self.threads[i], i as ThreadId));
@@ -85,7 +89,7 @@ impl Threads {
             thread.pid = pid;
             thread.state = ThreadState::Paused;
 
-            return Some(thread);
+            Some(thread)
         } else {
             None
         }
@@ -100,7 +104,6 @@ impl Threads {
         let old_state = thread.state;
         thread.state = state;
         if old_state != ThreadState::Running && state == ThreadState::Running {
-            super::println!("set running {}", thread.pid);
             self.runqueue.add(thread.pid, thread.prio);
         } else if old_state == ThreadState::Running && state != ThreadState::Running {
             self.runqueue.del(thread.pid, thread.prio);
@@ -193,7 +196,6 @@ pub enum ThreadState {
 
 impl Thread {
     /// create a default Thread object
-    ///
     pub const fn default() -> Thread {
         Thread {
             sp: 0,
@@ -234,13 +236,13 @@ impl Thread {
 /// the thread function returns.
 fn cleanup() -> ! {
     interrupt::free(|cs| {
-        let threads = unsafe { Threads::get_mut(&cs) };
+        let threads = unsafe { Threads::get_mut(cs) };
         threads.set_state(threads.current_pid().unwrap(), ThreadState::Invalid);
     });
 
     Threads::schedule();
 
-    loop {}
+    unreachable!();
 }
 
 #[naked]
