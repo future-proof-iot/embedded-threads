@@ -10,7 +10,7 @@ use cortex_m_semihosting::{
 
 use panic_semihosting as _;
 
-use et::{ThreadState, Threads};
+use et::{self, start_threading, thread_create};
 
 static mut STACK: [u8; 2048] = [0; 2048];
 static mut STACK2: [u8; 2048] = [0; 2048];
@@ -24,30 +24,15 @@ fn test_thread(arg: usize) {
 
 #[entry]
 fn main() -> ! {
-    println!("main() creating thread");
-    interrupt::free(|cs| {
-        let threads = unsafe { Threads::get_mut(&cs) };
-        let pid = threads
-            .create(unsafe { &mut STACK }, test_thread, 0, 0)
-            .unwrap()
-            .pid;
-        threads.set_state(pid, ThreadState::Running);
-    });
+    println!("main() creating thread 1");
+    thread_create(test_thread, 1, unsafe { &mut STACK }, 0);
 
     println!("main() creating thread 2");
-    interrupt::free(|cs| {
-        let threads = unsafe { Threads::get_mut(&cs) };
-        let pid = threads
-            .create(unsafe { &mut STACK2 }, test_thread, 1, 1)
-            .unwrap()
-            .pid;
-        println!("thread 2 pid={}", pid);
-        threads.set_state(pid, ThreadState::Running);
-    });
+    thread_create(test_thread, 2, unsafe { &mut STACK2 }, 1);
 
-    println!("main() post thread create");
+    println!("main() post thread create, starting threading");
 
-    unsafe { Threads::start_threading() };
+    unsafe { start_threading() };
 
     println!("main() shouldn't be here");
     // exit via semihosting call
