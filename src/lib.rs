@@ -6,14 +6,12 @@ use core::arch::asm;
 use core::cell::UnsafeCell;
 use core::ptr::write_volatile;
 
+use cortex_m_semihosting::hprintln as println;
+
 use riot_rs_runqueue::{RunQueue, RunqueueId, ThreadId};
 
-// cortex_m specific
-use cortex_m::{
-    interrupt::Mutex,
-    interrupt::{self, CriticalSection},
-    peripheral::SCB,
-};
+mod arch;
+pub use arch::{interrupt, CriticalSection, Mutex};
 
 /// global defining the number of possible priority levels
 pub const SCHED_PRIO_LEVELS: usize = 8;
@@ -39,26 +37,23 @@ impl Threads {
         }
     }
 
-    pub unsafe fn get_mut<'cs>(cs: &'cs CriticalSection) -> &'cs mut Threads {
+    /// get the global THREADS list, mutable
+    #[allow(clippy::mut_from_ref)]
+    pub(crate) unsafe fn get_mut(cs: &CriticalSection) -> &mut Threads {
         &mut *THREADS.borrow(cs).get()
     }
 
-    pub unsafe fn get<'cs>(cs: &'cs CriticalSection) -> &'cs Threads {
-        &*THREADS.borrow(cs).get()
+    pub(crate) fn get(cs: &CriticalSection) -> &Threads {
+        unsafe { &*THREADS.borrow(cs).get() }
     }
 
-    pub fn current<'cs>(&'cs mut self, cs: &'cs CriticalSection) -> Option<&'cs mut Thread> {
+    pub fn current(&mut self) -> Option<&mut Thread> {
         self.current_thread
-            .map(|pid| &mut self.threads[pid as usize])
+            .map(|tid| &mut self.threads[tid as usize])
     }
 
     pub fn current_pid(&self) -> Option<ThreadId> {
         self.current_thread
-    }
-
-    pub fn schedule() {
-        SCB::set_pendsv();
-        cortex_m::asm::isb();
     }
 
     fn get_unused(&mut self) -> Option<(&mut Thread, ThreadId)> {
@@ -70,17 +65,12 @@ impl Threads {
         None
     }
 
-    pub fn thread_current<'cs>(&'cs self, cs: &'cs CriticalSection) -> Option<&'cs Thread> {
-        self.current_thread
-            .map(|thread_id| &self.threads[thread_id as usize])
-    }
-
     /// Create a new thread
     pub fn create(
         &mut self,
-        stack: &mut [u8],
         func: fn(arg: usize),
         arg: usize,
+        stack: &mut [u8],
         prio: u8,
     ) -> Option<&mut Thread> {
         if let Some((thread, pid)) = self.get_unused() {
@@ -109,32 +99,38 @@ impl Threads {
             self.runqueue.del(thread.pid, thread.prio);
         }
     }
+}
 
-    pub unsafe fn start_threading() {
-        // faking a critical section to get THREADS
-        let cs = interrupt::CriticalSection::new();
-        let threads = Threads::get_mut(&cs);
+/// start threading
+///
+/// Supposed to be started early on by OS startup code.
+///
+/// # Safety
+/// This may only be called once.
+pub unsafe fn start_threading() {
+    // faking a critical section to get THREADS
+    let cs = CriticalSection::new();
+    let threads = Threads::get_mut(&cs);
 
-        let next_pid = threads.runqueue.get_next().unwrap();
-        threads.current_thread = Some(next_pid);
-        let next_sp = threads.threads[next_pid as usize].sp;
-        asm!(
+    let next_pid = threads.runqueue.get_next().unwrap();
+    threads.current_thread = Some(next_pid);
+    let next_sp = threads.threads[next_pid as usize].sp;
+    asm!(
             "
-            msr psp, r1
-            svc 0
+            msr psp, r1 // set new thread's SP to PSP
+            svc 0       // SVC 0 handles switching
             ",
         in("r1")next_sp);
-    }
 }
 
 /// scheduler
 #[no_mangle]
-pub unsafe fn sched(old_sp: usize) {
+unsafe fn sched(_old_sp: usize) {
     let next_pid;
 
     loop {
         {
-            let cs = interrupt::CriticalSection::new();
+            let cs = CriticalSection::new();
 
             let threads = Threads::get_mut(&cs);
             if let Some(pid) = threads.runqueue.get_next() {
@@ -148,7 +144,7 @@ pub unsafe fn sched(old_sp: usize) {
         cortex_m::interrupt::disable();
     }
 
-    let cs = interrupt::CriticalSection::new();
+    let cs = CriticalSection::new();
 
     let threads = Threads::get_mut(&cs);
 
@@ -159,6 +155,7 @@ pub unsafe fn sched(old_sp: usize) {
             asm!("", in("r0") 0);
             return;
         }
+        threads.current_thread = Some(next_pid);
         current_high_regs = threads.threads[current_pid as usize].high_regs.as_ptr();
     } else {
         current_high_regs = core::ptr::null();
@@ -226,8 +223,16 @@ impl Thread {
             write_volatile(stack_pos.offset(7), 0x01000000); // -> APSR
         }
 
-        return stack_pos as usize;
+        stack_pos as usize
     }
+}
+
+pub fn thread_create(func: fn(arg: usize), arg: usize, stack: &mut [u8], prio: u8) {
+    interrupt::free(|cs| {
+        let threads = unsafe { Threads::get_mut(cs) };
+        let pid = threads.create(func, arg, stack, prio).unwrap().pid;
+        threads.set_state(pid, ThreadState::Running);
+    });
 }
 
 /// thread cleanup function
@@ -235,12 +240,16 @@ impl Thread {
 /// This gets hooked into a newly created thread stack so it gets called when
 /// the thread function returns.
 fn cleanup() -> ! {
-    interrupt::free(|cs| {
+    let pid = interrupt::free(|cs| {
         let threads = unsafe { Threads::get_mut(cs) };
-        threads.set_state(threads.current_pid().unwrap(), ThreadState::Invalid);
+        let pid = threads.current_pid().unwrap();
+        threads.set_state(pid, ThreadState::Invalid);
+        pid
     });
 
-    Threads::schedule();
+    println!("thread {}: exited", pid);
+
+    arch::schedule();
 
     unreachable!();
 }
