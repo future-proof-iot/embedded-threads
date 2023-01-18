@@ -115,23 +115,18 @@ pub unsafe fn start_threading() {
     let next_pid = threads.runqueue.get_next().unwrap();
     threads.current_thread = Some(next_pid);
     let next_sp = threads.threads[next_pid as usize].sp;
-    asm!(
-            "
-            msr psp, r1 // set new thread's SP to PSP
-            svc 0       // SVC 0 handles switching
-            ",
-        in("r1")next_sp);
+    arch::start_threading(next_sp);
 }
 
 /// scheduler
 #[no_mangle]
 unsafe fn sched(_old_sp: usize) {
+    let cs = CriticalSection::new();
+
     let next_pid;
 
     loop {
         {
-            let cs = CriticalSection::new();
-
             let threads = Threads::get_mut(&cs);
             if let Some(pid) = threads.runqueue.get_next() {
                 next_pid = pid;
@@ -144,10 +139,7 @@ unsafe fn sched(_old_sp: usize) {
         cortex_m::interrupt::disable();
     }
 
-    let cs = CriticalSection::new();
-
     let threads = Threads::get_mut(&cs);
-
     let current_high_regs;
 
     if let Some(current_pid) = threads.current_pid() {
@@ -252,49 +244,4 @@ fn cleanup() -> ! {
     arch::schedule();
 
     unreachable!();
-}
-
-#[naked]
-#[no_mangle]
-#[allow(non_snake_case)]
-unsafe extern "C" fn SVCall() {
-    asm!(
-        "
-            movw LR, #0xFFFd
-            movt LR, #0xFFFF
-            bx lr
-            ",
-        options(noreturn)
-    );
-}
-
-#[naked]
-#[no_mangle]
-#[allow(non_snake_case)]
-unsafe extern "C" fn PendSV() {
-    asm!(
-        "
-            mrs r0, psp
-            cpsid i
-            bl {sched}
-            cpsie i
-            cmp r0, #0
-            /* label rules:
-             * - number only
-             * - no combination of *only* [01]
-             * - add f or b for 'next matching forward/backward'
-             * so let's use '99' forward ('99f')
-             */
-            beq 99f
-            stmia r0, {{r4-r11}}
-            ldmia r1, {{r4-r11}}
-            msr.n psp, r2
-            99:
-            movw LR, #0xFFFd
-            movt LR, #0xFFFF
-            bx LR
-            ",
-        sched = sym sched,
-        options(noreturn)
-    );
 }

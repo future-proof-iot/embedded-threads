@@ -1,7 +1,6 @@
 #![no_std]
 #![no_main]
 
-use cortex_m::interrupt;
 use cortex_m_rt::entry;
 use cortex_m_semihosting::{
     debug::{self, EXIT_SUCCESS},
