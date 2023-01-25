@@ -14,5 +14,8 @@ panic-semihosting = { version = "0.6.0", features = ["exit"] }
 
 riot-rs-runqueue = "0.1.*"
 
+[profile.release]
+debug=true
+
 [patch.crates-io]
 riot-rs-runqueue = { git = "https://github.com/future-proof-iot/riot-rs-runqueue", branch = "main" }

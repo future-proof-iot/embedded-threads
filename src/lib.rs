@@ -8,10 +8,15 @@ use core::ptr::write_volatile;
 
 use cortex_m_semihosting::hprintln as println;
 
-use riot_rs_runqueue::{RunQueue, RunqueueId, ThreadId};
+pub use riot_rs_runqueue::ThreadId;
+use riot_rs_runqueue::{RunQueue, RunqueueId};
 
 mod arch;
-pub use arch::{interrupt, CriticalSection, Mutex};
+pub use arch::{interrupt, schedule, CriticalSection, Mutex};
+use threadlist::ThreadList;
+
+pub mod lock;
+mod threadlist;
 
 /// global defining the number of possible priority levels
 pub const SCHED_PRIO_LEVELS: usize = 8;
@@ -45,6 +50,10 @@ impl Threads {
 
     pub(crate) fn get(cs: &CriticalSection) -> &Threads {
         unsafe { &*THREADS.borrow(cs).get() }
+    }
+
+    pub(crate) fn by_pid_unckecked(&mut self, thread_id: ThreadId) -> &mut Thread {
+        &mut self.threads[thread_id as usize]
     }
 
     pub fn current(&mut self) -> Option<&mut Thread> {
@@ -89,15 +98,38 @@ impl Threads {
     ///
     /// This function handles adding/removing the thread to the Runqueue depending
     /// on its previous or new state.
-    pub fn set_state(&mut self, pid: ThreadId, state: ThreadState) {
+    pub(crate) fn set_state(&mut self, pid: ThreadId, state: ThreadState) {
         let thread = &mut self.threads[pid as usize];
         let old_state = thread.state;
         thread.state = state;
         if old_state != ThreadState::Running && state == ThreadState::Running {
+            //println!("adding {} to runqueue", thread.pid);
+
             self.runqueue.add(thread.pid, thread.prio);
         } else if old_state == ThreadState::Running && state != ThreadState::Running {
             self.runqueue.del(thread.pid, thread.prio);
         }
+    }
+
+    fn wait_on(&mut self, thread_id: ThreadId, thread_list: &mut ThreadList, state: ThreadState) {
+        let thread = &mut self.threads[thread_id as usize];
+        // TODO: sort by priority
+        thread.next = thread_list.head;
+        thread_list.head = Some(thread_id);
+        self.set_state(thread_id, state);
+        arch::schedule();
+    }
+
+    fn current_wait_on(&mut self, thread_list: &mut ThreadList, state: ThreadState) {
+        let thread_id = self.current_pid().unwrap();
+        self.wait_on(thread_id, thread_list, state)
+    }
+
+    fn wake_pid(&mut self, thread_id: ThreadId) {
+        let thread = &mut self.threads[thread_id as usize];
+        thread.next = None;
+        self.set_state(thread_id, ThreadState::Running);
+        arch::schedule();
     }
 }
 
@@ -120,7 +152,7 @@ pub unsafe fn start_threading() {
 
 /// scheduler
 #[no_mangle]
-unsafe fn sched(_old_sp: usize) {
+unsafe fn sched(old_sp: usize) {
     let cs = CriticalSection::new();
 
     let next_pid;
@@ -147,12 +179,16 @@ unsafe fn sched(_old_sp: usize) {
             asm!("", in("r0") 0);
             return;
         }
+        //println!("current: {} next: {}", current_pid, next_pid);
+        threads.threads[current_pid as usize].sp = old_sp;
         threads.current_thread = Some(next_pid);
         current_high_regs = threads.threads[current_pid as usize].high_regs.as_ptr();
     } else {
         current_high_regs = core::ptr::null();
     }
     let next = &threads.threads[next_pid as usize];
+
+    //println!("old_sp: {:x} next.sp: {:x}", old_sp, next.sp);
 
     // PendSV expects these three pointers in r0, r1 and r2:
     // r0= &current.high_regs
@@ -171,6 +207,7 @@ pub struct Thread {
     sp: usize,
     high_regs: [usize; 8],
     pub(crate) state: ThreadState,
+    pub next: Option<ThreadId>,
     pub prio: RunqueueId,
     pub pid: ThreadId,
 }
@@ -181,6 +218,7 @@ pub enum ThreadState {
     Invalid,
     Running,
     Paused,
+    LockWait,
 }
 
 impl Thread {
@@ -190,6 +228,7 @@ impl Thread {
             sp: 0,
             state: ThreadState::Invalid,
             high_regs: [0; 8],
+            next: None,
             prio: 0,
             pid: 0,
         }
@@ -227,6 +266,10 @@ pub fn thread_create(func: fn(arg: usize), arg: usize, stack: &mut [u8], prio: u
     });
 }
 
+pub fn current_pid() -> Option<ThreadId> {
+    interrupt::free(|cs| unsafe { Threads::get_mut(cs) }.current_pid())
+}
+
 /// thread cleanup function
 ///
 /// This gets hooked into a newly created thread stack so it gets called when
@@ -234,9 +277,9 @@ pub fn thread_create(func: fn(arg: usize), arg: usize, stack: &mut [u8], prio: u
 fn cleanup() -> ! {
     let pid = interrupt::free(|cs| {
         let threads = unsafe { Threads::get_mut(cs) };
-        let pid = threads.current_pid().unwrap();
-        threads.set_state(pid, ThreadState::Invalid);
-        pid
+        let thread_id = threads.current_pid().unwrap();
+        threads.set_state(thread_id, ThreadState::Invalid);
+        thread_id
     });
 
     println!("thread {}: exited", pid);
