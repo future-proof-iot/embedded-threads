@@ -9,16 +9,16 @@ use cortex_m_semihosting::{
 
 use panic_semihosting as _;
 
-use et::{self, lock::Lock, start_threading, thread_create};
+use embedded_threads::{self, lock::Lock, start_threading, thread_create};
 
 static mut STACK: [u8; 4096] = [0; 4096];
 static mut STACK2: [u8; 4096] = [0; 4096];
 
 fn test_thread(lock: &Lock) {
-    let pid = et::current_pid().unwrap();
+    let pid = embedded_threads::current_pid().unwrap();
     println!("test_thread() pid={}", pid);
 
-    et::schedule();
+    embedded_threads::schedule();
 
     println!("{}: lock state: {}", pid, lock.is_locked());
 

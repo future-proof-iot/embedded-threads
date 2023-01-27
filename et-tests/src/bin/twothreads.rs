@@ -9,7 +9,7 @@ use cortex_m_semihosting::{
 
 use panic_semihosting as _;
 
-use et::{self, start_threading, thread_create};
+use embedded_threads::{self, start_threading, thread_create};
 
 static mut STACK: [u8; 2048] = [0; 2048];
 static mut STACK2: [u8; 2048] = [0; 2048];

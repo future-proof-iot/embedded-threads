@@ -69,7 +69,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "et"
+name = "embedded-threads"
 version = "0.1.0"
 dependencies = [
  "cortex-m",
@@ -86,7 +86,7 @@ dependencies = [
  "cortex-m",
  "cortex-m-rt",
  "cortex-m-semihosting",
- "et",
+ "embedded-threads",
  "panic-semihosting",
 ]
 
