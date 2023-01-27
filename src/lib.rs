@@ -275,7 +275,7 @@ impl<T> Arguable for &T {
     }
 }
 
-pub fn thread_create<T: Arguable>(func: fn(arg: T), arg: T, stack: &mut [u8], prio: u8) {
+pub fn thread_create<T: Arguable + Send>(func: fn(arg: T), arg: T, stack: &mut [u8], prio: u8) {
     let arg = arg.into_arg();
     thread_create_raw(func as usize, arg, stack, prio)
 }

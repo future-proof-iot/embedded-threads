@@ -8,6 +8,8 @@ pub struct Lock {
     state: UnsafeCell<LockState>,
 }
 
+unsafe impl Sync for Lock {}
+
 enum LockState {
     Unlocked,
     Locked(ThreadList),
