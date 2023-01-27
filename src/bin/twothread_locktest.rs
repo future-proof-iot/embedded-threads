@@ -14,8 +14,7 @@ use et::{self, lock::Lock, start_threading, thread_create};
 static mut STACK: [u8; 4096] = [0; 4096];
 static mut STACK2: [u8; 4096] = [0; 4096];
 
-fn test_thread(arg: usize) {
-    let lock = unsafe { &*(arg as *const Lock) };
+fn test_thread(lock: &Lock) {
     let pid = et::current_pid().unwrap();
     println!("test_thread() pid={}", pid);
 
@@ -50,20 +49,10 @@ fn main() -> ! {
     let lock = Lock::new();
 
     println!("main() creating thread 1");
-    thread_create(
-        test_thread,
-        &lock as *const _ as usize,
-        unsafe { &mut STACK },
-        0,
-    );
+    thread_create(test_thread, &lock, unsafe { &mut STACK }, 0);
 
     println!("main() creating thread 2");
-    thread_create(
-        test_thread,
-        &lock as *const _ as usize,
-        unsafe { &mut STACK2 },
-        1,
-    );
+    thread_create(test_thread, &lock, unsafe { &mut STACK2 }, 1);
 
     println!("main() post thread create, starting threading");
 

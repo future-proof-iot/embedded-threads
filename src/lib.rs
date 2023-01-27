@@ -68,13 +68,13 @@ impl Threads {
     /// Create a new thread
     pub fn create(
         &mut self,
-        func: fn(arg: usize),
+        func: usize,
         arg: usize,
         stack: &mut [u8],
         prio: u8,
     ) -> Option<&mut Thread> {
         if let Some((thread, pid)) = self.get_unused() {
-            thread.sp = Thread::setup_stack(stack, func as usize, arg);
+            thread.sp = Thread::setup_stack(stack, func, arg);
             thread.prio = prio;
             thread.pid = pid;
             thread.state = ThreadState::Paused;
@@ -259,7 +259,28 @@ impl Thread {
     }
 }
 
-pub fn thread_create(func: fn(arg: usize), arg: usize, stack: &mut [u8], prio: u8) {
+pub trait Arguable {
+    fn into_arg(self) -> usize;
+}
+
+impl Arguable for usize {
+    fn into_arg(self) -> usize {
+        self
+    }
+}
+
+impl<T> Arguable for &T {
+    fn into_arg(self) -> usize {
+        self as *const T as usize
+    }
+}
+
+pub fn thread_create<T: Arguable>(func: fn(arg: T), arg: T, stack: &mut [u8], prio: u8) {
+    let arg = arg.into_arg();
+    thread_create_raw(func as usize, arg, stack, prio)
+}
+
+pub fn thread_create_raw(func: usize, arg: usize, stack: &mut [u8], prio: u8) {
     interrupt::free(|cs| {
         let threads = unsafe { Threads::get_mut(cs) };
         let pid = threads.create(func, arg, stack, prio).unwrap().pid;
