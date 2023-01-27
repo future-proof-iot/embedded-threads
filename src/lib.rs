@@ -56,22 +56,13 @@ impl Threads {
         &mut self.threads[thread_id as usize]
     }
 
-    pub fn current(&mut self) -> Option<&mut Thread> {
+    pub(crate) fn current(&mut self) -> Option<&mut Thread> {
         self.current_thread
             .map(|tid| &mut self.threads[tid as usize])
     }
 
     pub fn current_pid(&self) -> Option<ThreadId> {
         self.current_thread
-    }
-
-    fn get_unused(&mut self) -> Option<(&mut Thread, ThreadId)> {
-        for i in 0..THREADS_NUMOF {
-            if self.threads[i].state == ThreadState::Invalid {
-                return Some((&mut self.threads[i], i as ThreadId));
-            }
-        }
-        None
     }
 
     /// Create a new thread
@@ -92,6 +83,16 @@ impl Threads {
         } else {
             None
         }
+    }
+
+    // get an unused ThreadId / Thread slot
+    fn get_unused(&mut self) -> Option<(&mut Thread, ThreadId)> {
+        for i in 0..THREADS_NUMOF {
+            if self.threads[i].state == ThreadState::Invalid {
+                return Some((&mut self.threads[i], i as ThreadId));
+            }
+        }
+        None
     }
 
     /// set state of thread
