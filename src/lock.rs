@@ -2,7 +2,6 @@ use core::cell::UnsafeCell;
 
 use super::arch::interrupt;
 use super::threadlist::ThreadList;
-use super::{ThreadState, Threads};
 
 pub struct Lock {
     state: UnsafeCell<LockState>,
@@ -44,7 +43,7 @@ impl Lock {
             match state {
                 LockState::Unlocked => *state = LockState::Locked(ThreadList::new()),
                 LockState::Locked(waiters) => {
-                    unsafe { Threads::get_mut(cs) }.current_wait_on(waiters, ThreadState::LockWait);
+                    waiters.put_current(cs);
                 }
             }
         })
@@ -69,10 +68,7 @@ impl Lock {
             match state {
                 LockState::Unlocked => {} // TODO: panic?
                 LockState::Locked(waiters) => {
-                    if let Some(thread_id) = waiters.pop(cs) {
-                        //super::println!("unlocking {}", thread_id);
-                        unsafe { Threads::get_mut(cs) }.wake_pid(thread_id);
-                    } else {
+                    if waiters.pop(cs).is_none() {
                         *state = LockState::Unlocked
                     }
                 }

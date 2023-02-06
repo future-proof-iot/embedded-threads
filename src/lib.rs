@@ -3,7 +3,6 @@
 #![feature(naked_functions)]
 
 use core::arch::asm;
-use core::cell::UnsafeCell;
 use core::ptr::write_volatile;
 
 use cortex_m_semihosting::hprintln as println;
@@ -12,11 +11,14 @@ pub use riot_rs_runqueue::ThreadId;
 use riot_rs_runqueue::{RunQueue, RunqueueId};
 
 mod arch;
-pub use arch::{interrupt, schedule, CriticalSection, Mutex};
-use threadlist::ThreadList;
-
+mod ensure_once;
 pub mod lock;
+mod thread_flags;
 mod threadlist;
+
+pub use arch::{interrupt, schedule, CriticalSection, Mutex};
+use ensure_once::EnsureOnce;
+pub use thread_flags::ThreadFlags;
 
 /// global defining the number of possible priority levels
 pub const SCHED_PRIO_LEVELS: usize = 8;
@@ -24,13 +26,35 @@ pub const SCHED_PRIO_LEVELS: usize = 8;
 /// global defining the number of threads that can be created
 pub const THREADS_NUMOF: usize = 8;
 
-pub static THREADS: Mutex<UnsafeCell<Threads>> = Mutex::new(UnsafeCell::new(Threads::new()));
+pub(crate) static THREADS: EnsureOnce<Threads> = EnsureOnce::new(Threads::new());
+
+/// Main struct for holding thread data
+#[derive(Debug)]
+pub struct Thread {
+    sp: usize,
+    high_regs: [usize; 8],
+    pub(crate) state: ThreadState,
+    pub prio: RunqueueId,
+    pub pid: ThreadId,
+    pub flags: ThreadFlags,
+}
 
 pub struct Threads {
     /// global thread runqueue
     runqueue: RunQueue<SCHED_PRIO_LEVELS, THREADS_NUMOF>,
     threads: [Thread; THREADS_NUMOF],
+    thread_blocklist: [Option<ThreadId>; THREADS_NUMOF],
     current_thread: Option<ThreadId>,
+}
+
+/// Possible states of a thread
+#[derive(Copy, Clone, PartialEq, Debug)]
+pub enum ThreadState {
+    Invalid,
+    Running,
+    Paused,
+    LockBlocked,
+    FlagBlocked(thread_flags::WaitMode),
 }
 
 impl Threads {
@@ -38,18 +62,9 @@ impl Threads {
         Self {
             runqueue: RunQueue::new(),
             threads: [const { Thread::default() }; THREADS_NUMOF],
+            thread_blocklist: [const { None }; THREADS_NUMOF],
             current_thread: None,
         }
-    }
-
-    /// get the global THREADS list, mutable
-    #[allow(clippy::mut_from_ref)]
-    pub(crate) unsafe fn get_mut(cs: &CriticalSection) -> &mut Threads {
-        &mut *THREADS.borrow(cs).get()
-    }
-
-    pub(crate) fn get(cs: &CriticalSection) -> &Threads {
-        unsafe { &*THREADS.borrow(cs).get() }
     }
 
     pub(crate) fn by_pid_unckecked(&mut self, thread_id: ThreadId) -> &mut Thread {
@@ -66,7 +81,7 @@ impl Threads {
     }
 
     /// Create a new thread
-    pub fn create(
+    pub(crate) fn create(
         &mut self,
         func: usize,
         arg: usize,
@@ -111,27 +126,6 @@ impl Threads {
             self.runqueue.del(thread.pid, thread.prio);
         }
     }
-
-    fn wait_on(&mut self, thread_id: ThreadId, thread_list: &mut ThreadList, state: ThreadState) {
-        let thread = &mut self.threads[thread_id as usize];
-        // TODO: sort by priority
-        thread.next = thread_list.head;
-        thread_list.head = Some(thread_id);
-        self.set_state(thread_id, state);
-        arch::schedule();
-    }
-
-    fn current_wait_on(&mut self, thread_list: &mut ThreadList, state: ThreadState) {
-        let thread_id = self.current_pid().unwrap();
-        self.wait_on(thread_id, thread_list, state)
-    }
-
-    fn wake_pid(&mut self, thread_id: ThreadId) {
-        let thread = &mut self.threads[thread_id as usize];
-        thread.next = None;
-        self.set_state(thread_id, ThreadState::Running);
-        arch::schedule();
-    }
 }
 
 /// start threading
@@ -143,11 +137,11 @@ impl Threads {
 pub unsafe fn start_threading() {
     // faking a critical section to get THREADS
     let cs = CriticalSection::new();
-    let threads = Threads::get_mut(&cs);
-
-    let next_pid = threads.runqueue.get_next().unwrap();
-    threads.current_thread = Some(next_pid);
-    let next_sp = threads.threads[next_pid as usize].sp;
+    let next_sp = THREADS.with_mut_cs(&cs, |mut threads| {
+        let next_pid = threads.runqueue.get_next().unwrap();
+        threads.current_thread = Some(next_pid);
+        threads.threads[next_pid as usize].sp
+    });
     arch::start_threading(next_sp);
 }
 
@@ -155,13 +149,11 @@ pub unsafe fn start_threading() {
 #[no_mangle]
 unsafe fn sched(old_sp: usize) {
     let cs = CriticalSection::new();
-
     let next_pid;
 
     loop {
         {
-            let threads = Threads::get_mut(&cs);
-            if let Some(pid) = threads.runqueue.get_next() {
+            if let Some(pid) = (&*THREADS.as_ptr(&cs)).runqueue.get_next() {
                 next_pid = pid;
                 break;
             }
@@ -172,7 +164,7 @@ unsafe fn sched(old_sp: usize) {
         cortex_m::interrupt::disable();
     }
 
-    let threads = Threads::get_mut(&cs);
+    let mut threads = &mut *THREADS.as_ptr(&cs);
     let current_high_regs;
 
     if let Some(current_pid) = threads.current_pid() {
@@ -187,9 +179,12 @@ unsafe fn sched(old_sp: usize) {
     } else {
         current_high_regs = core::ptr::null();
     }
-    let next = &threads.threads[next_pid as usize];
 
-    //println!("old_sp: {:x} next.sp: {:x}", old_sp, next.sp);
+    let next = &threads.threads[next_pid as usize];
+    let next_sp = next.sp;
+    let next_high_regs = next.high_regs.as_ptr();
+
+    //println!("old_sp: {:x} next.sp: {:x}", old_sp, next_sp);
 
     // PendSV expects these three pointers in r0, r1 and r2:
     // r0= &current.high_regs
@@ -197,29 +192,7 @@ unsafe fn sched(old_sp: usize) {
     // r2= &next.sp
     //
     // write to registers manually, as ABI would return the values via stack
-    asm!("", in("r0") current_high_regs, in("r1") next.high_regs.as_ptr(), in("r2")next.sp);
-}
-
-//}
-
-/// Main struct for holding thread data
-#[derive(Debug)]
-pub struct Thread {
-    sp: usize,
-    high_regs: [usize; 8],
-    pub(crate) state: ThreadState,
-    pub next: Option<ThreadId>,
-    pub prio: RunqueueId,
-    pub pid: ThreadId,
-}
-
-/// Possible states of a thread
-#[derive(Copy, Clone, PartialEq, Debug)]
-pub enum ThreadState {
-    Invalid,
-    Running,
-    Paused,
-    LockWait,
+    asm!("", in("r0") current_high_regs, in("r1") next_high_regs, in("r2")next_sp);
 }
 
 impl Thread {
@@ -229,7 +202,7 @@ impl Thread {
             sp: 0,
             state: ThreadState::Invalid,
             high_regs: [0; 8],
-            next: None,
+            flags: 0,
             prio: 0,
             pid: 0,
         }
@@ -259,6 +232,9 @@ impl Thread {
     }
 }
 
+/// trait for types that fit into a single register.
+///
+/// Currently implemented for references (`&T`) and usize.
 pub trait Arguable {
     fn into_arg(self) -> usize;
 }
@@ -281,15 +257,14 @@ pub fn thread_create<T: Arguable + Send>(func: fn(arg: T), arg: T, stack: &mut [
 }
 
 pub fn thread_create_raw(func: usize, arg: usize, stack: &mut [u8], prio: u8) {
-    interrupt::free(|cs| {
-        let threads = unsafe { Threads::get_mut(cs) };
+    THREADS.with_mut(|mut threads| {
         let pid = threads.create(func, arg, stack, prio).unwrap().pid;
         threads.set_state(pid, ThreadState::Running);
     });
 }
 
 pub fn current_pid() -> Option<ThreadId> {
-    interrupt::free(|cs| unsafe { Threads::get_mut(cs) }.current_pid())
+    THREADS.with(|threads| threads.current_pid())
 }
 
 /// thread cleanup function
@@ -297,8 +272,7 @@ pub fn current_pid() -> Option<ThreadId> {
 /// This gets hooked into a newly created thread stack so it gets called when
 /// the thread function returns.
 fn cleanup() -> ! {
-    let pid = interrupt::free(|cs| {
-        let threads = unsafe { Threads::get_mut(cs) };
+    let pid = THREADS.with_mut(|mut threads| {
         let thread_id = threads.current_pid().unwrap();
         threads.set_state(thread_id, ThreadState::Invalid);
         thread_id
