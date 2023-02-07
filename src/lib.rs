@@ -12,13 +12,14 @@ use riot_rs_runqueue::{RunQueue, RunqueueId};
 
 mod arch;
 mod ensure_once;
-pub mod lock;
-mod thread_flags;
 mod threadlist;
+
+pub mod lock;
+pub mod thread_flags;
 
 pub use arch::{interrupt, schedule, CriticalSection, Mutex};
 use ensure_once::EnsureOnce;
-pub use thread_flags::ThreadFlags;
+pub use thread_flags::*;
 
 /// global defining the number of possible priority levels
 pub const SCHED_PRIO_LEVELS: usize = 8;
@@ -98,6 +99,14 @@ impl Threads {
         } else {
             None
         }
+    }
+
+    fn get_unchecked(&self, thread_id: ThreadId) -> &Thread {
+        &self.threads[thread_id as usize]
+    }
+
+    fn get_unchecked_mut(&mut self, thread_id: ThreadId) -> &mut Thread {
+        &mut self.threads[thread_id as usize]
     }
 
     // get an unused ThreadId / Thread slot
@@ -242,6 +251,12 @@ pub trait Arguable {
 impl Arguable for usize {
     fn into_arg(self) -> usize {
         self
+    }
+}
+
+impl Arguable for () {
+    fn into_arg(self) -> usize {
+        0
     }
 }
 
