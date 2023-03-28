@@ -1,4 +1,4 @@
-use crate::arch::interrupt::CriticalSection;
+use critical_section::CriticalSection;
 
 use crate::{arch, ThreadId, ThreadState, THREADS};
 
@@ -11,7 +11,7 @@ impl ThreadList {
         Self { head: None }
     }
 
-    pub(crate) fn put_current(&mut self, cs: &CriticalSection) {
+    pub(crate) fn put_current(&mut self, cs: CriticalSection) {
         THREADS.with_mut_cs(cs, |mut threads| {
             let thread_id = threads.current_thread.unwrap();
             threads.thread_blocklist[thread_id as usize] = self.head;
@@ -21,7 +21,7 @@ impl ThreadList {
         });
     }
 
-    pub(crate) fn pop(&mut self, cs: &CriticalSection) -> Option<ThreadId> {
+    pub(crate) fn pop(&mut self, cs: CriticalSection) -> Option<ThreadId> {
         if let Some(head) = self.head {
             let result = Some(head);
             THREADS.with_mut_cs(cs, |mut threads| {

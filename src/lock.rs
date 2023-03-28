@@ -1,6 +1,5 @@
 use core::cell::UnsafeCell;
 
-use super::arch::interrupt;
 use super::threadlist::ThreadList;
 
 pub struct Lock {
@@ -28,7 +27,7 @@ impl Lock {
     }
 
     pub fn is_locked(&self) -> bool {
-        interrupt::free(|_| {
+        critical_section::with(|_| {
             let state = unsafe { &*self.state.get() };
             match state {
                 LockState::Unlocked => false,
@@ -38,7 +37,7 @@ impl Lock {
     }
 
     pub fn acquire(&self) {
-        interrupt::free(|cs| {
+        critical_section::with(|cs| {
             let state = unsafe { &mut *self.state.get() };
             match state {
                 LockState::Unlocked => *state = LockState::Locked(ThreadList::new()),
@@ -50,7 +49,7 @@ impl Lock {
     }
 
     pub fn try_acquire(&self) -> bool {
-        interrupt::free(|_| {
+        critical_section::with(|_| {
             let state = unsafe { &mut *self.state.get() };
             match state {
                 LockState::Unlocked => {
@@ -63,7 +62,7 @@ impl Lock {
     }
 
     pub fn release(&self) {
-        interrupt::free(|cs| {
+        critical_section::with(|cs| {
             let state = unsafe { &mut *self.state.get() };
             match state {
                 LockState::Unlocked => {} // TODO: panic?

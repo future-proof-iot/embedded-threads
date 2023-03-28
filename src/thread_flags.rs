@@ -1,4 +1,4 @@
-use crate::{Thread, ThreadId, ThreadState, Threads, THREADS};
+use crate::{ThreadId, ThreadState, Threads, THREADS};
 
 /// type of thread flags
 pub type ThreadFlags = u16;

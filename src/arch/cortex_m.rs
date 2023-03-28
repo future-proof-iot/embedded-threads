@@ -1,6 +1,5 @@
 use core::arch::asm;
 use core::ptr::write_volatile;
-pub use cortex_m::interrupt::{self, CriticalSection, Mutex};
 use cortex_m::peripheral::SCB;
 
 use crate::{cleanup, sched};

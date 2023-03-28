@@ -5,6 +5,7 @@
 use core::arch::asm;
 
 use cortex_m_semihosting::hprintln as println;
+use critical_section::CriticalSection;
 
 pub use riot_rs_runqueue::ThreadId;
 use riot_rs_runqueue::{RunQueue, RunqueueId};
@@ -16,7 +17,8 @@ mod threadlist;
 pub mod lock;
 pub mod thread_flags;
 
-pub use arch::{interrupt, schedule, CriticalSection, Mutex};
+pub use arch::schedule;
+
 use ensure_once::EnsureOnce;
 pub use thread_flags::*;
 
@@ -145,7 +147,7 @@ impl Threads {
 pub unsafe fn start_threading() {
     // faking a critical section to get THREADS
     let cs = CriticalSection::new();
-    let next_sp = THREADS.with_mut_cs(&cs, |mut threads| {
+    let next_sp = THREADS.with_mut_cs(cs, |mut threads| {
         let next_pid = threads.runqueue.get_next().unwrap();
         threads.current_thread = Some(next_pid);
         threads.threads[next_pid as usize].sp
@@ -161,7 +163,7 @@ unsafe fn sched(old_sp: usize) {
 
     loop {
         {
-            if let Some(pid) = (&*THREADS.as_ptr(&cs)).runqueue.get_next() {
+            if let Some(pid) = (&*THREADS.as_ptr(cs)).runqueue.get_next() {
                 next_pid = pid;
                 break;
             }
@@ -172,7 +174,7 @@ unsafe fn sched(old_sp: usize) {
         cortex_m::interrupt::disable();
     }
 
-    let mut threads = &mut *THREADS.as_ptr(&cs);
+    let mut threads = &mut *THREADS.as_ptr(cs);
     let current_high_regs;
 
     if let Some(current_pid) = threads.current_pid() {
