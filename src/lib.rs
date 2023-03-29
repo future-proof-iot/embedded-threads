@@ -7,8 +7,8 @@ use core::arch::asm;
 use cortex_m_semihosting::hprintln as println;
 use critical_section::CriticalSection;
 
-pub use riot_rs_runqueue::ThreadId;
-use riot_rs_runqueue::{RunQueue, RunqueueId};
+use riot_rs_runqueue::RunQueue;
+pub use riot_rs_runqueue::{RunqueueId, ThreadId};
 
 mod arch;
 mod ensure_once;
@@ -33,12 +33,12 @@ pub(crate) static THREADS: EnsureOnce<Threads> = EnsureOnce::new(Threads::new())
 /// Main struct for holding thread data
 #[derive(Debug)]
 pub struct Thread {
-    sp: usize,
-    high_regs: [usize; 8],
-    pub(crate) state: ThreadState,
+    pub sp: usize,
+    pub state: ThreadState,
     pub prio: RunqueueId,
     pub pid: ThreadId,
     pub flags: ThreadFlags,
+    high_regs: [usize; 8],
 }
 
 pub struct Threads {
