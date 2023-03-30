@@ -22,10 +22,10 @@ pub use arch::schedule;
 use ensure_once::EnsureOnce;
 pub use thread_flags::*;
 
-/// global defining the number of possible priority levels
+/// a global defining the number of possible priority levels
 pub const SCHED_PRIO_LEVELS: usize = 8;
 
-/// global defining the number of threads that can be created
+/// a global defining the number of threads that can be created
 pub const THREADS_NUMOF: usize = 8;
 
 pub(crate) static THREADS: EnsureOnce<Threads> = EnsureOnce::new(Threads::new());
@@ -41,6 +41,7 @@ pub struct Thread {
     high_regs: [usize; 8],
 }
 
+/// Struct holding all scheduler state
 pub struct Threads {
     /// global thread runqueue
     runqueue: RunQueue<SCHED_PRIO_LEVELS, THREADS_NUMOF>,
@@ -156,6 +157,9 @@ pub unsafe fn start_threading() {
 }
 
 /// scheduler
+///
+/// On Cortex-M, this is called in PendSV.
+// TODO: make arch independent, or move to arch
 #[no_mangle]
 unsafe fn sched(old_sp: usize) {
     let cs = CriticalSection::new();
@@ -244,18 +248,23 @@ impl<T> Arguable for &T {
     }
 }
 
+/// Low-level function to create a thread
 pub fn thread_create<T: Arguable + Send>(func: fn(arg: T), arg: T, stack: &mut [u8], prio: u8) {
     let arg = arg.into_arg();
     thread_create_raw(func as usize, arg, stack, prio)
 }
 
-pub fn thread_create_raw(func: usize, arg: usize, stack: &mut [u8], prio: u8) {
+fn thread_create_raw(func: usize, arg: usize, stack: &mut [u8], prio: u8) {
     THREADS.with_mut(|mut threads| {
         let pid = threads.create(func, arg, stack, prio).unwrap().pid;
         threads.set_state(pid, ThreadState::Running);
     });
 }
 
+/// Returns the thread id of the currently active thread.
+///
+/// Note: when called from ISRs, this will return the thread id of the thread
+/// that was interrupted.
 pub fn current_pid() -> Option<ThreadId> {
     THREADS.with(|threads| threads.current_pid())
 }
