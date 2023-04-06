@@ -224,16 +224,22 @@ impl<T> Arguable for &T {
 }
 
 /// Low-level function to create a thread
-pub fn thread_create<T: Arguable + Send>(func: fn(arg: T), arg: T, stack: &mut [u8], prio: u8) {
+pub fn thread_create<T: Arguable + Send>(
+    func: fn(arg: T),
+    arg: T,
+    stack: &mut [u8],
+    prio: u8,
+) -> ThreadId {
     let arg = arg.into_arg();
-    thread_create_raw(func as usize, arg, stack, prio)
+    unsafe { thread_create_raw(func as usize, arg, stack, prio) }
 }
 
-fn thread_create_raw(func: usize, arg: usize, stack: &mut [u8], prio: u8) {
+pub unsafe fn thread_create_raw(func: usize, arg: usize, stack: &mut [u8], prio: u8) -> ThreadId {
     THREADS.with_mut(|mut threads| {
-        let pid = threads.create(func, arg, stack, prio).unwrap().pid;
-        threads.set_state(pid, ThreadState::Running);
-    });
+        let thread_id = threads.create(func, arg, stack, prio).unwrap().pid;
+        threads.set_state(thread_id, ThreadState::Running);
+        thread_id
+    })
 }
 
 /// Returns the thread id of the currently active thread.
@@ -265,4 +271,12 @@ fn cleanup() -> ! {
     arch::schedule();
 
     unreachable!();
+}
+
+pub fn yield_same() {
+    THREADS.with_mut(|mut threads| {
+        let runqueue = threads.current().unwrap().prio;
+        threads.runqueue.advance(runqueue);
+        arch::schedule();
+    })
 }
