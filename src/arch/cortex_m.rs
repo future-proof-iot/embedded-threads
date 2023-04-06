@@ -38,6 +38,7 @@ pub(crate) fn start_threading(next_sp: usize) {
         asm!(
             "
             msr psp, r1 // set new thread's SP to PSP
+            cpsie i     // enable interrupts, otherwise svc hard faults
             svc 0       // SVC 0 handles switching
             ",
         in("r1")next_sp);
