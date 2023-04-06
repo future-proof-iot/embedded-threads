@@ -102,6 +102,14 @@ impl Threads {
         None
     }
 
+    fn is_valid_pid(&self, thread_id: ThreadId) -> bool {
+        if thread_id as usize >= THREADS_NUMOF {
+            false
+        } else {
+            self.threads[thread_id as usize].state != ThreadState::Invalid
+        }
+    }
+
     /// set state of thread
     ///
     /// This function handles adding/removing the thread to the Runqueue depending
@@ -234,6 +242,11 @@ fn thread_create_raw(func: usize, arg: usize, stack: &mut [u8], prio: u8) {
 /// that was interrupted.
 pub fn current_pid() -> Option<ThreadId> {
     THREADS.with(|threads| threads.current_pid())
+}
+
+/// Check if a given [`ThreadId`] is valid
+pub fn is_valid_pid(thread_id: ThreadId) -> bool {
+    THREADS.with(|threads| threads.is_valid_pid(thread_id))
 }
 
 /// thread cleanup function
