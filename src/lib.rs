@@ -15,12 +15,14 @@ mod ensure_once;
 mod threadlist;
 
 pub mod lock;
+pub mod thread;
 pub mod thread_flags;
 
 pub use arch::schedule;
+pub use thread::{Thread, ThreadState};
+pub use thread_flags::*;
 
 use ensure_once::EnsureOnce;
-pub use thread_flags::*;
 
 /// a global defining the number of possible priority levels
 pub const SCHED_PRIO_LEVELS: usize = 8;
@@ -30,17 +32,6 @@ pub const THREADS_NUMOF: usize = 8;
 
 pub(crate) static THREADS: EnsureOnce<Threads> = EnsureOnce::new(Threads::new());
 
-/// Main struct for holding thread data
-#[derive(Debug)]
-pub struct Thread {
-    pub sp: usize,
-    pub state: ThreadState,
-    pub prio: RunqueueId,
-    pub pid: ThreadId,
-    pub flags: ThreadFlags,
-    high_regs: [usize; 8],
-}
-
 /// Struct holding all scheduler state
 pub struct Threads {
     /// global thread runqueue
@@ -48,16 +39,6 @@ pub struct Threads {
     threads: [Thread; THREADS_NUMOF],
     thread_blocklist: [Option<ThreadId>; THREADS_NUMOF],
     current_thread: Option<ThreadId>,
-}
-
-/// Possible states of a thread
-#[derive(Copy, Clone, PartialEq, Debug)]
-pub enum ThreadState {
-    Invalid,
-    Running,
-    Paused,
-    LockBlocked,
-    FlagBlocked(thread_flags::WaitMode),
 }
 
 impl Threads {
@@ -207,20 +188,6 @@ unsafe fn sched(old_sp: usize) {
     //
     // write to registers manually, as ABI would return the values via stack
     asm!("", in("r0") current_high_regs, in("r1") next_high_regs, in("r2")next_sp);
-}
-
-impl Thread {
-    /// create a default Thread object
-    pub const fn default() -> Thread {
-        Thread {
-            sp: 0,
-            state: ThreadState::Invalid,
-            high_regs: [0; 8],
-            flags: 0,
-            prio: 0,
-            pid: 0,
-        }
-    }
 }
 
 /// trait for types that fit into a single register.
