@@ -1,5 +1,7 @@
 pub use crate::{RunqueueId, ThreadFlags, ThreadId};
 
+use crate::{arch, THREADS};
+
 /// Main struct for holding thread data
 #[derive(Debug)]
 pub struct Thread {
@@ -34,4 +36,13 @@ impl Thread {
             pid: 0,
         }
     }
+}
+
+/// Suspend/pause the current thread's execution
+pub fn sleep() {
+    THREADS.with_mut(|mut threads| {
+        let pid = threads.current_pid().unwrap();
+        threads.set_state(pid, ThreadState::Paused);
+        arch::schedule();
+    });
 }
