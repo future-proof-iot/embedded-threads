@@ -48,7 +48,7 @@ pub fn clear(mask: ThreadFlags) -> ThreadFlags {
 }
 
 pub fn get() -> ThreadFlags {
-    // TODO: current() requires us to use mutable threads here
+    // TODO: current() requires us to use mutable `threads` here
     THREADS.with_mut(|mut threads| threads.current().unwrap().flags)
 }
 
@@ -86,13 +86,9 @@ impl Threads {
     fn flag_wait_any(&mut self, mask: ThreadFlags) -> Option<ThreadFlags> {
         let thread = self.current().unwrap();
         if thread.flags & mask != 0 {
-            if thread.flags & mask != 0 {
-                let res = thread.flags & mask;
-                thread.flags &= !res;
-                Some(res)
-            } else {
-                None
-            }
+            let res = thread.flags & mask;
+            thread.flags &= !res;
+            Some(res)
         } else {
             let thread_id = thread.pid;
             self.set_state(thread_id, ThreadState::FlagBlocked(WaitMode::Any(mask)));
