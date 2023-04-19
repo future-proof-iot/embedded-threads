@@ -2,6 +2,7 @@
 use core::cell::UnsafeCell;
 
 use super::threadlist::ThreadList;
+use super::ThreadState;
 
 /// A basic locking object
 ///
@@ -59,7 +60,7 @@ impl Lock {
             match state {
                 LockState::Unlocked => *state = LockState::Locked(ThreadList::new()),
                 LockState::Locked(waiters) => {
-                    waiters.put_current(cs);
+                    waiters.put_current(cs, ThreadState::LockBlocked);
                 }
             }
         })

@@ -14,6 +14,7 @@ mod arch;
 mod ensure_once;
 mod threadlist;
 
+pub mod channel;
 pub mod lock;
 pub mod thread;
 pub mod thread_flags;
@@ -114,7 +115,7 @@ impl Threads {
     ///
     /// This function handles adding/removing the thread to the Runqueue depending
     /// on its previous or new state.
-    pub(crate) fn set_state(&mut self, pid: ThreadId, state: ThreadState) {
+    pub(crate) fn set_state(&mut self, pid: ThreadId, state: ThreadState) -> ThreadState {
         let thread = &mut self.threads[pid as usize];
         let old_state = thread.state;
         thread.state = state;
@@ -125,6 +126,8 @@ impl Threads {
         } else if old_state == ThreadState::Running && state != ThreadState::Running {
             self.runqueue.del(thread.pid, thread.prio);
         }
+
+        old_state
     }
 }
 

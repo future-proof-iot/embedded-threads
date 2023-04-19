@@ -21,6 +21,8 @@ pub enum ThreadState {
     Paused,
     LockBlocked,
     FlagBlocked(crate::thread_flags::WaitMode),
+    ChannelRxBlocked(usize),
+    ChannelTxBlocked(usize),
     Zombie,
 }
 
