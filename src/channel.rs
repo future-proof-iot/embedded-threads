@@ -64,6 +64,31 @@ impl<T: Copy + Send> Channel<T> {
         })
     }
 
+    pub fn try_send(&self, something: &T) -> bool {
+        with(|cs| {
+            let state = unsafe { &mut *self.state.get() };
+            match state {
+                ChannelState::ReceiversWaiting(waiters) => {
+                    if let Some((_, head_state)) = waiters.pop(cs) {
+                        if waiters.is_empty(cs) {
+                            *state = ChannelState::Idle;
+                        }
+                        if let ThreadState::ChannelRxBlocked(ptr) = head_state {
+                            // copy over `something`
+                            unsafe { *(ptr as *mut T) = *something };
+                        } else {
+                            unreachable!("unexpected thread state");
+                        }
+                    } else {
+                        unreachable!("unexpected empty thread list");
+                    }
+                    true
+                }
+                _ => false,
+            }
+        })
+    }
+
     pub fn recv(&self) -> T {
         let mut res = MaybeUninit::uninit();
         with(|cs| {
@@ -103,5 +128,37 @@ impl<T: Copy + Send> Channel<T> {
         });
 
         unsafe { res.assume_init() }
+    }
+
+    pub fn try_recv(&self) -> Option<T> {
+        let mut res = MaybeUninit::uninit();
+        let have_received = with(|cs| {
+            let state = unsafe { &mut *self.state.get() };
+            match state {
+                ChannelState::SendersWaiting(waiters) => {
+                    if let Some((_, head_state)) = waiters.pop(cs) {
+                        if waiters.is_empty(cs) {
+                            *state = ChannelState::Idle;
+                        }
+                        if let ThreadState::ChannelTxBlocked(ptr) = head_state {
+                            // copy over `something`
+                            unsafe { res.write(*(ptr as *const T)) };
+                        } else {
+                            unreachable!("unexpected thread state");
+                        }
+                        true
+                    } else {
+                        unreachable!("unexpected empty thread list");
+                    }
+                }
+                _ => false,
+            }
+        });
+
+        if have_received {
+            unsafe { Some(res.assume_init()) }
+        } else {
+            None
+        }
     }
 }
