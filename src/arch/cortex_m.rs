@@ -1,8 +1,9 @@
 use core::arch::asm;
 use core::ptr::write_volatile;
 use cortex_m::peripheral::SCB;
+use critical_section::CriticalSection;
 
-use crate::{cleanup, sched};
+use crate::{cleanup, THREADS};
 
 /// Sets up stack for newly created threads.
 ///
@@ -27,6 +28,7 @@ pub(crate) fn setup_stack(stack: &mut [u8], func: usize, arg: usize) -> usize {
     stack_pos as usize
 }
 
+#[inline(always)]
 pub fn schedule() {
     SCB::set_pendsv();
     cortex_m::asm::isb();
@@ -88,4 +90,57 @@ unsafe extern "C" fn PendSV() {
         sched = sym sched,
         options(noreturn)
     );
+}
+
+/// scheduler
+///
+/// On Cortex-M, this is called in PendSV.
+// TODO: make arch independent, or move to arch
+#[no_mangle]
+unsafe fn sched(old_sp: usize) {
+    let cs = CriticalSection::new();
+    let next_pid;
+
+    loop {
+        {
+            if let Some(pid) = (&*THREADS.as_ptr(cs)).runqueue.get_next() {
+                next_pid = pid;
+                break;
+            }
+        }
+        //pm_set_lowest();
+        cortex_m::interrupt::enable();
+        // pending interrupts would now get to run their ISRs
+        cortex_m::interrupt::disable();
+    }
+
+    let mut threads = &mut *THREADS.as_ptr(cs);
+    let current_high_regs;
+
+    if let Some(current_pid) = threads.current_pid() {
+        if next_pid == current_pid {
+            asm!("", in("r0") 0);
+            return;
+        }
+        //println!("current: {} next: {}", current_pid, next_pid);
+        threads.threads[current_pid as usize].sp = old_sp;
+        threads.current_thread = Some(next_pid);
+        current_high_regs = threads.threads[current_pid as usize].high_regs.as_ptr();
+    } else {
+        current_high_regs = core::ptr::null();
+    }
+
+    let next = &threads.threads[next_pid as usize];
+    let next_sp = next.sp;
+    let next_high_regs = next.high_regs.as_ptr();
+
+    //println!("old_sp: {:x} next.sp: {:x}", old_sp, next_sp);
+
+    // PendSV expects these three pointers in r0, r1 and r2:
+    // r0= &current.high_regs
+    // r1= &next.high_regs
+    // r2= &next.sp
+    //
+    // write to registers manually, as ABI would return the values via stack
+    asm!("", in("r0") current_high_regs, in("r1") next_high_regs, in("r2")next_sp);
 }

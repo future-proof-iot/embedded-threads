@@ -1,10 +1,7 @@
-#![no_std]
+#![cfg_attr(not(test), no_std)]
 #![feature(inline_const)]
 #![feature(naked_functions)]
 
-use core::arch::asm;
-
-use cortex_m_semihosting::hprintln as println;
 use critical_section::CriticalSection;
 
 use riot_rs_runqueue::RunQueue;
@@ -120,8 +117,6 @@ impl Threads {
         let old_state = thread.state;
         thread.state = state;
         if old_state != ThreadState::Running && state == ThreadState::Running {
-            //println!("adding {} to runqueue", thread.pid);
-
             self.runqueue.add(thread.pid, thread.prio);
         } else if old_state == ThreadState::Running && state != ThreadState::Running {
             self.runqueue.del(thread.pid, thread.prio);
@@ -146,59 +141,6 @@ pub unsafe fn start_threading() {
         threads.threads[next_pid as usize].sp
     });
     arch::start_threading(next_sp);
-}
-
-/// scheduler
-///
-/// On Cortex-M, this is called in PendSV.
-// TODO: make arch independent, or move to arch
-#[no_mangle]
-unsafe fn sched(old_sp: usize) {
-    let cs = CriticalSection::new();
-    let next_pid;
-
-    loop {
-        {
-            if let Some(pid) = (&*THREADS.as_ptr(cs)).runqueue.get_next() {
-                next_pid = pid;
-                break;
-            }
-        }
-        //pm_set_lowest();
-        cortex_m::interrupt::enable();
-        // pending interrupts would now get to run their ISRs
-        cortex_m::interrupt::disable();
-    }
-
-    let mut threads = &mut *THREADS.as_ptr(cs);
-    let current_high_regs;
-
-    if let Some(current_pid) = threads.current_pid() {
-        if next_pid == current_pid {
-            asm!("", in("r0") 0);
-            return;
-        }
-        //println!("current: {} next: {}", current_pid, next_pid);
-        threads.threads[current_pid as usize].sp = old_sp;
-        threads.current_thread = Some(next_pid);
-        current_high_regs = threads.threads[current_pid as usize].high_regs.as_ptr();
-    } else {
-        current_high_regs = core::ptr::null();
-    }
-
-    let next = &threads.threads[next_pid as usize];
-    let next_sp = next.sp;
-    let next_high_regs = next.high_regs.as_ptr();
-
-    //println!("old_sp: {:x} next.sp: {:x}", old_sp, next_sp);
-
-    // PendSV expects these three pointers in r0, r1 and r2:
-    // r0= &current.high_regs
-    // r1= &next.high_regs
-    // r2= &next.sp
-    //
-    // write to registers manually, as ABI would return the values via stack
-    asm!("", in("r0") current_high_regs, in("r1") next_high_regs, in("r2")next_sp);
 }
 
 /// trait for types that fit into a single register.
@@ -269,8 +211,6 @@ fn cleanup() -> ! {
         thread_id
     });
 
-    println!("thread {}: exited", pid);
-
     arch::schedule();
 
     unreachable!();
@@ -282,4 +222,12 @@ pub fn yield_same() {
         threads.runqueue.advance(runqueue);
         arch::schedule();
     })
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn test_basic() {
+        assert_eq!(1, 1);
+    }
 }

@@ -44,7 +44,7 @@ impl ThreadList {
     }
 
     /// Determines if this `ThreadList` is empty
-    pub(crate) fn is_empty(&self, cs: CriticalSection) -> bool {
+    pub(crate) fn is_empty(&self, _cs: CriticalSection) -> bool {
         self.head.is_none()
     }
 }
