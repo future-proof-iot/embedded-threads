@@ -2,6 +2,9 @@
 
 This is embedded-threads, an experimental embedded Rust scheduler.
 
+__NOTE: This repository has been re-integrated into [RIOT-rs](https://github.com/future-proof-iot/RIOT-rs/tree/main/src/riot-rs-threads).
+      All future development will happen there.__
+
 A while ago, I re-wrote the RIOT scheduler in Rust. That was supposed to be
 API- compatible and run RIOT applications as-is. The result worked and was of
 comparable performance, but the implementation turned out too C-like.
